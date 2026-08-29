@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
-import { SYSTEM_PROMPT, RESULT_TOOL } from "@/lib/prompt";
+import { buildAnalysisSystemPrompt, RESULT_TOOL } from "@/lib/prompt";
 import type { AnalysisResult } from "@/lib/types";
 
 export const runtime = "nodejs";
 
 const MIN_LENGTH = 20;
 const MAX_LENGTH = 8000;
-const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5-20250929";
+const MAX_SPEAKER_NAME_LENGTH = 60;
+const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
 
 // 아주 단순한 IP 기반 레이트리밋 (서버리스 인스턴스 단위, 완벽하지 않음)
 const rateBucket = new Map<string, number[]>();
@@ -59,6 +60,12 @@ export async function POST(req: NextRequest) {
 
     const body = await req.json().catch(() => null);
     const text = typeof body?.text === "string" ? body.text.trim() : "";
+    const speakerNameRaw =
+      typeof body?.speakerName === "string" ? body.speakerName.trim() : "";
+    const speakerName =
+      speakerNameRaw.length > 0 && speakerNameRaw.length <= MAX_SPEAKER_NAME_LENGTH
+        ? speakerNameRaw
+        : undefined;
 
     if (text.length < MIN_LENGTH) {
       return NextResponse.json(
@@ -82,13 +89,15 @@ export async function POST(req: NextRequest) {
     const message = await anthropic.messages.create({
       model: MODEL,
       max_tokens: 4096,
-      system: SYSTEM_PROMPT,
+      system: buildAnalysisSystemPrompt(speakerName),
       tools: [RESULT_TOOL],
       tool_choice: { type: "tool", name: "submit_analysis" },
       messages: [
         {
           role: "user",
-          content: `다음은 사용자가 붙여넣은 텍스트다. 이 텍스트를 바탕으로 커뮤니케이션 스타일을 분석해서 submit_analysis 도구를 호출해줘.\n\n---\n${text}\n---`,
+          content: speakerName
+            ? `다음은 사용자가 붙여넣은 대화 텍스트다. 이 중 "${speakerName}"의 발화만을 분석 대상으로 삼아 커뮤니케이션 스타일을 분석해서 submit_analysis 도구를 호출해줘.\n\n---\n${text}\n---`
+            : `다음은 사용자가 붙여넣은 텍스트다. 이 텍스트를 바탕으로 커뮤니케이션 스타일을 분석해서 submit_analysis 도구를 호출해줘.\n\n---\n${text}\n---`,
         },
       ],
     });
