@@ -33,8 +33,20 @@ export interface AnalysisResult {
 
 export interface AnalyzeRequestBody {
   text: string;
+  speakerName?: string;
 }
 
 export interface AnalyzeErrorResponse {
   error: string;
+}
+
+// 여러 명이 나오는 대화(카톡 등)인지 판별한 결과.
+// isDialogue가 true면 speakers에 등장인물 이름 후보들이 담긴다.
+export interface DetectSpeakersResult {
+  isDialogue: boolean;
+  speakers: string[]; // 최대 6명
+}
+
+export interface DetectSpeakersRequestBody {
+  text: string;
 }
