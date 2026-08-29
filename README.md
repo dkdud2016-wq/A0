@@ -13,12 +13,14 @@
 ## 폴더 구조
 ```
 app/
-  page.tsx              # 입력 → 로딩 → 결과 상태 전환
+  page.tsx                      # 입력 → (화자 판별) → (화자 선택) → 로딩 → 결과 상태 전환
   layout.tsx
   globals.css
-  api/analyze/route.ts  # Claude API 호출 (서버 전용)
+  api/analyze/route.ts          # Claude API 호출 — 최종 분석 (서버 전용)
+  api/detect-speakers/route.ts  # Claude API 호출 — 대화 여부/등장인물 판별 (서버 전용)
 components/
   InputScreen.tsx
+  SpeakerSelect.tsx        # 대화 텍스트일 때 "이 중 누가 나인가요?" 선택 화면
   LoadingScreen.tsx
   ResultScreen.tsx
   RevealCard.tsx         # 카드 등장 애니메이션 wrapper
@@ -39,8 +41,8 @@ lib/
    ```
    ```
    ANTHROPIC_API_KEY=sk-ant-실제키
-   # 선택: 모델을 바꾸고 싶으면
-   ANTHROPIC_MODEL=claude-sonnet-4-5-20250929
+   # 선택: 모델을 바꾸고 싶으면 (기본값은 claude-sonnet-5)
+   ANTHROPIC_MODEL=claude-sonnet-5
    ```
 3. 개발 서버 실행
    ```bash
@@ -63,14 +65,24 @@ lib/
 
 ## 동작 방식 요약
 1. 사용자가 텍스트(최소 20자, 최대 8000자)를 입력하고 "나 분석하기"를
-   누르면 `/api/analyze`로 POST 요청을 보냅니다.
-2. 서버는 `lib/prompt.ts`의 시스템 프롬프트 + `tool_choice`로 Claude가
+   누르면 먼저 `/api/detect-speakers`로 POST 요청을 보내 이 텍스트가
+   "여러 명이 나오는 대화"(카톡 등)인지, 아니면 한 사람의 글(일기/메모/
+   SNS)인지를 가볍게 판별합니다.
+2. 대화로 판별되면 등장인물 이름을 보여주는 "이 중에 당신은
+   누구인가요?" 화면(`components/SpeakerSelect.tsx`)으로 이동합니다.
+   사용자가 자신에 해당하는 이름을 고르면(또는 직접 입력하면) 그 이름을
+   `speakerName`으로 함께 실어 `/api/analyze`를 호출하고, 서버는 오직
+   그 사람의 발화만 분석 대상으로 삼도록 지시된 프롬프트
+   (`buildAnalysisSystemPrompt`)를 사용합니다. 다른 참여자의 말은
+   맥락으로만 참고되고 성향 계산에는 섞이지 않습니다. 판별 자체가
+   대화가 아니라고 나오면 이 단계 없이 바로 3번으로 넘어갑니다.
+3. 서버는 `lib/prompt.ts`의 시스템 프롬프트 + `tool_choice`로 Claude가
    반드시 정해진 JSON 스키마(`submit_analysis` 도구)를 호출하도록
    강제합니다. 이렇게 하면 파싱 오류 없이 안전하게 구조화된 결과를
    받습니다.
-3. 결과는 카드 단위(한 줄 요약 → 유형 → 레이더 → 팩트 폭격 → 인간관계 →
+4. 결과는 카드 단위(한 줄 요약 → 유형 → 레이더 → 팩트 폭격 → 인간관계 →
    의외의 특징 → 마지막 한마디)로 순차 애니메이션과 함께 노출됩니다.
-4. "이미지 저장"은 결과 카드 영역만 캡처합니다(원문 입력 텍스트는 결과
+5. "이미지 저장"은 결과 카드 영역만 캡처합니다(원문 입력 텍스트는 결과
    화면에 아예 렌더링되지 않으므로 이미지에도 포함되지 않습니다).
    "텍스트로 복사"는 헤드라인/유형/주요 점수를 클립보드에 복사합니다.
 
