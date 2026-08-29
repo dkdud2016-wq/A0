@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { buildAnalysisSystemPrompt, RESULT_TOOL } from "@/lib/prompt";
+import { validateImages, buildImageContentBlocks } from "@/lib/media";
 import type { AnalysisResult } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -60,6 +61,8 @@ export async function POST(req: NextRequest) {
 
     const body = await req.json().catch(() => null);
     const text = typeof body?.text === "string" ? body.text.trim() : "";
+    const hasImages = Array.isArray(body?.images) && body.images.length > 0;
+    const images = hasImages ? body.images : undefined;
     const speakerNameRaw =
       typeof body?.speakerName === "string" ? body.speakerName.trim() : "";
     const speakerName =
@@ -67,24 +70,48 @@ export async function POST(req: NextRequest) {
         ? speakerNameRaw
         : undefined;
 
-    if (text.length < MIN_LENGTH) {
+    if (!hasImages) {
+      if (text.length < MIN_LENGTH) {
+        return NextResponse.json(
+          {
+            error: `텍스트가 너무 짧아요. 최소 ${MIN_LENGTH}자 이상 붙여넣거나 스크린샷을 올려주세요.`,
+          },
+          { status: 400 }
+        );
+      }
+      if (text.length > MAX_LENGTH) {
+        return NextResponse.json(
+          {
+            error: `텍스트가 너무 길어요. ${MAX_LENGTH}자 이내로 줄여주세요.`,
+          },
+          { status: 400 }
+        );
+      }
+    } else if (!validateImages(images)) {
       return NextResponse.json(
-        {
-          error: `텍스트가 너무 짧아요. 최소 ${MIN_LENGTH}자 이상 붙여넣어 주세요.`,
-        },
-        { status: 400 }
-      );
-    }
-    if (text.length > MAX_LENGTH) {
-      return NextResponse.json(
-        {
-          error: `텍스트가 너무 길어요. ${MAX_LENGTH}자 이내로 줄여주세요.`,
-        },
+        { error: "이미지 형식이 올바르지 않거나 너무 크거나 개수가 많아요." },
         { status: 400 }
       );
     }
 
     const anthropic = new Anthropic({ apiKey });
+
+    const analysisInstruction = speakerName
+      ? `이 중 "${speakerName}"의 발화만을 분석 대상으로 삼아 커뮤니케이션 스타일을 분석해서 submit_analysis 도구를 호출해줘.`
+      : `이 내용을 바탕으로 커뮤니케이션 스타일을 분석해서 submit_analysis 도구를 호출해줘.`;
+
+    const userContent = hasImages
+      ? [
+          ...buildImageContentBlocks(images),
+          {
+            type: "text" as const,
+            text:
+              `다음은 사용자가 업로드한 스크린샷이다.` +
+              (text ? ` 사용자가 다음 설명도 함께 붙였다: "${text}"\n\n` : " ") +
+              analysisInstruction,
+          },
+        ]
+      : `다음은 사용자가 붙여넣은 텍스트다. ${analysisInstruction}\n\n---\n${text}\n---`;
 
     const message = await anthropic.messages.create({
       model: MODEL,
@@ -95,9 +122,8 @@ export async function POST(req: NextRequest) {
       messages: [
         {
           role: "user",
-          content: speakerName
-            ? `다음은 사용자가 붙여넣은 대화 텍스트다. 이 중 "${speakerName}"의 발화만을 분석 대상으로 삼아 커뮤니케이션 스타일을 분석해서 submit_analysis 도구를 호출해줘.\n\n---\n${text}\n---`
-            : `다음은 사용자가 붙여넣은 텍스트다. 이 텍스트를 바탕으로 커뮤니케이션 스타일을 분석해서 submit_analysis 도구를 호출해줘.\n\n---\n${text}\n---`,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          content: userContent as any,
         },
       ],
     });
