@@ -12,14 +12,19 @@ type Stage = "input" | "detecting" | "speaker-select" | "loading" | "result";
 // 로딩 화면이 너무 빨리 사라지지 않도록 최소로 보여주는 시간(ms)
 const MIN_LOADING_MS = 3800;
 
+type PendingInput = {
+  text?: string;
+  images?: { base64: string; mediaType: string }[];
+};
+
 export default function Home() {
   const [stage, setStage] = useState<Stage>("input");
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [pendingText, setPendingText] = useState("");
+  const [pendingInput, setPendingInput] = useState<PendingInput>({});
   const [detectedSpeakers, setDetectedSpeakers] = useState<string[]>([]);
 
-  const runAnalysis = async (text: string, speakerName?: string) => {
+  const runAnalysis = async (input: PendingInput, speakerName?: string) => {
     setError(null);
     setStage("loading");
 
@@ -29,7 +34,7 @@ export default function Home() {
       const res = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, speakerName }),
+        body: JSON.stringify({ ...input, speakerName }),
       });
 
       const data = await res.json();
@@ -57,16 +62,16 @@ export default function Home() {
     }
   };
 
-  const handleSubmit = async (text: string) => {
+  const handleSubmit = async (input: PendingInput) => {
     setError(null);
-    setPendingText(text);
+    setPendingInput(input);
     setStage("detecting");
 
     try {
       const res = await fetch("/api/detect-speakers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify(input),
       });
 
       const data = (await res.json().catch(() => null)) as
@@ -80,15 +85,15 @@ export default function Home() {
       }
 
       // 대화가 아니거나 판별 실패 시 바로 분석으로 진행.
-      await runAnalysis(text);
+      await runAnalysis(input);
     } catch (e) {
       // 판별 자체가 실패해도 전체 흐름을 막지 않고 바로 분석으로 진행.
-      await runAnalysis(text);
+      await runAnalysis(input);
     }
   };
 
   const handleSpeakerConfirm = (speakerName?: string) => {
-    runAnalysis(pendingText, speakerName);
+    runAnalysis(pendingInput, speakerName);
   };
 
   const handleBackToInput = () => {
@@ -99,7 +104,7 @@ export default function Home() {
   const handleRestart = () => {
     setResult(null);
     setError(null);
-    setPendingText("");
+    setPendingInput({});
     setDetectedSpeakers([]);
     setStage("input");
   };
