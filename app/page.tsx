@@ -4,9 +4,10 @@ import { useState } from "react";
 import InputScreen from "@/components/InputScreen";
 import LoadingScreen from "@/components/LoadingScreen";
 import ResultScreen from "@/components/ResultScreen";
-import type { AnalysisResult } from "@/lib/types";
+import SpeakerSelect from "@/components/SpeakerSelect";
+import type { AnalysisResult, DetectSpeakersResult } from "@/lib/types";
 
-type Stage = "input" | "loading" | "result";
+type Stage = "input" | "detecting" | "speaker-select" | "loading" | "result";
 
 // 로딩 화면이 너무 빨리 사라지지 않도록 최소로 보여주는 시간(ms)
 const MIN_LOADING_MS = 3800;
@@ -15,8 +16,10 @@ export default function Home() {
   const [stage, setStage] = useState<Stage>("input");
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pendingText, setPendingText] = useState("");
+  const [detectedSpeakers, setDetectedSpeakers] = useState<string[]>([]);
 
-  const handleSubmit = async (text: string) => {
+  const runAnalysis = async (text: string, speakerName?: string) => {
     setError(null);
     setStage("loading");
 
@@ -26,7 +29,7 @@ export default function Home() {
       const res = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, speakerName }),
       });
 
       const data = await res.json();
@@ -54,13 +57,64 @@ export default function Home() {
     }
   };
 
-  const handleRestart = () => {
-    setResult(null);
+  const handleSubmit = async (text: string) => {
+    setError(null);
+    setPendingText(text);
+    setStage("detecting");
+
+    try {
+      const res = await fetch("/api/detect-speakers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+
+      const data = (await res.json().catch(() => null)) as
+        | DetectSpeakersResult
+        | null;
+
+      if (res.ok && data?.isDialogue) {
+        setDetectedSpeakers(Array.isArray(data.speakers) ? data.speakers : []);
+        setStage("speaker-select");
+        return;
+      }
+
+      // 대화가 아니거나 판별 실패 시 바로 분석으로 진행.
+      await runAnalysis(text);
+    } catch (e) {
+      // 판별 자체가 실패해도 전체 흐름을 막지 않고 바로 분석으로 진행.
+      await runAnalysis(text);
+    }
+  };
+
+  const handleSpeakerConfirm = (speakerName?: string) => {
+    runAnalysis(pendingText, speakerName);
+  };
+
+  const handleBackToInput = () => {
     setError(null);
     setStage("input");
   };
 
+  const handleRestart = () => {
+    setResult(null);
+    setError(null);
+    setPendingText("");
+    setDetectedSpeakers([]);
+    setStage("input");
+  };
+
+  if (stage === "detecting")
+    return <LoadingScreen message="🔍 대화 속 말투를 확인하는 중..." />;
   if (stage === "loading") return <LoadingScreen />;
+  if (stage === "speaker-select")
+    return (
+      <SpeakerSelect
+        speakers={detectedSpeakers}
+        onConfirm={handleSpeakerConfirm}
+        onBack={handleBackToInput}
+      />
+    );
   if (stage === "result" && result)
     return <ResultScreen result={result} onRestart={handleRestart} />;
 
